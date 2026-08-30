@@ -179,7 +179,7 @@ class ReTextTab(QSplitter):
             return (basename if basename else fileinfo.fileName())
         return self.tr("New document")
 
-    def getHtmlFromConverted(self, converted, includeStyleSheet=True, webenv=False):
+    def getHtmlFromConverted(self, converted, includeStyleSheet=True, webenv=False, preview=False):
         if converted is None:
             markupClass = self.getActiveMarkupClass()
             errMsg = self.tr('Could not parse file contents, check if '
@@ -203,6 +203,20 @@ class ReTextTab(QSplitter):
         if self.cssFileExists:
             headers += f'<link rel="stylesheet" type="text/css" href="{baseName}.css">\n'
         headers += f'<meta name="generator" content="ReText {app_version}">\n'
+        if preview and globalSettings.scrollFactor != 1.0:
+            headers += f"""
+            <script>
+                document.addEventListener("wheel", (event) => {{
+                    event.preventDefault();
+                    const factor = {globalSettings.scrollFactor:f};
+                    window.scrollBy({{
+                        left: event.deltaX * factor,
+                        top: event.deltaY * factor,
+                        behavior: "instant",
+                    }});
+                }}, {{ passive: false }});
+            </script>
+            """
         return converted.get_whole_html(
             custom_headers=headers, include_stylesheet=includeStyleSheet,
             fallback_title=baseName, webenv=webenv)
@@ -241,7 +255,7 @@ class ReTextTab(QSplitter):
             else:
                 self.previewBox.distToBottom = None
         try:
-            html = self.getHtmlFromConverted(self.converted)
+            html = self.getHtmlFromConverted(self.converted, preview=True)
         except Exception:
             return self.p.printError()
         self.previewBox.setFont(globalSettings.getPreviewFont())

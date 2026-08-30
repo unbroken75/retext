@@ -37,6 +37,7 @@ class ReTextPreview(QTextBrowser):
         self.lastRenderTime = 0
         self.distToBottom = None
         self.verticalScrollBar().rangeChanged.connect(self.updateScrollPosition)
+        self.verticalScrollBar().setSingleStep(int(globalSettings.scrollFactor * 20))
 
     def disconnectExternalSignals(self):
         pass

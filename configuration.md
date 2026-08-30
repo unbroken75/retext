@@ -17,7 +17,6 @@ option name                    | type      | description
 `directoryPath`                | string    | the path to the root directory to display in the side panel if `showDirectoryTree` is true (default: `~`)
 `documentStatsEnabled`         | boolean   | whether to show document stats (word count, character count) (default: false)
 `editorFont`                   | string    | font to use for editor (comma-separated string as returned by [QFont.toString()])
-`editorScrollBarStep`          | integer   | scrolling speed in the editor (default: 20)
 `font`                         | string    | font to use for previews (comma-separated string as returned by [QFont.toString()])
 `handleWebLinks`               | boolean   | whether to use ReText preview area to open external links (default: false)
 `hideToolBar`                  | boolean   | whether to hide the toolbars from the UI (default: false)
@@ -36,6 +35,7 @@ option name                    | type      | description
 `rightMargin`                  | integer   | enable drawing of vertical line on defined position (or 0 to disable)
 `rightMarginWrap`              | boolean   | enable soft wrap at specified margin line (default: false)
 `saveWindowGeometry`           | boolean   | whether to restore window geometry from previous session (default: false)
+`scrollFactor`                 | float     | scrolling speed factor (default: 1.0)
 `showDirectoryTree`            | boolean   | whether to show a directory tree on the left side of the window (default: false)
 `spellCheck`                   | boolean   | whether to enable spell checking
 `spellCheckLocale`             | string    | spell check locale to use, possibly comma-separated (examples: `pt_BR`, `ru,en_US`)
