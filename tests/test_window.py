@@ -33,7 +33,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 import ReText
-from ReText.window import ReTextWindow
+from ReText.window import MAX_REWATCH_ATTEMPTS, REWATCH_RETRY_INTERVAL, ReTextWindow
 
 path_to_testdata = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'testdata')
 
@@ -514,6 +514,86 @@ class TestWindow(unittest.TestCase):
         QTest.qWait(100)
         self.assertEqual(editBox.toPlainText(), 'modified first content')
         self.assertTrue(window.currentTab.forceDisableAutoSave)
+
+        window.closeTab(0)
+        self.assertEqual(window.fileSystemWatcher.files(), [])
+        with suppress(PermissionError):
+            os.remove(fileName)
+
+    @unittest.skipIf(platform.system() == 'Windows', 'QFileSystemWatcher does not work reliably')
+    @patch('ReText.window.QMessageBox.exec', return_value=None)
+    def test_reloadFileReplacedAtomically(self, messageBoxExecMock):
+        # Many applications do not save files in place: they write a new
+        # file and rename it over the original. That replaces the file
+        # the watch refers to, so it has to be re-created every time.
+        # See https://github.com/retext-project/retext/issues/137
+        self.fileSystemWatcherPatcher.stop()
+        window = ReTextWindow()
+        handle, fileName = tempfile.mkstemp(suffix='.mkd')
+        os.close(handle)  # the file has to be replaceable and removable
+        with open(fileName, 'w', encoding='utf-8') as tempFile:
+            tempFile.write('first content')
+        window.openFileWrapper(fileName)
+        self.assertEqual(window.fileSystemWatcher.files(), [fileName.replace('\\', '/')])
+        editBox = window.currentTab.editBox
+        self.assertEqual(editBox.toPlainText(), 'first content')
+        app.processEvents()
+
+        def replaceAtomically(content):
+            tmpName = fileName + '.tmp'
+            with open(tmpName, 'w', encoding='utf-8') as tempFile:
+                tempFile.write(content)
+            os.replace(tmpName, fileName)
+
+        replaceAtomically('modified externally once')
+        QTest.qWait(100)
+        self.assertEqual(editBox.toPlainText(), 'modified externally once')
+        self.assertEqual(window.fileSystemWatcher.files(), [fileName.replace('\\', '/')])
+
+        # A second replacement must be detected as well, which means the
+        # watch was re-established after the first one.
+        replaceAtomically('modified externally twice')
+        QTest.qWait(100)
+        self.assertEqual(editBox.toPlainText(), 'modified externally twice')
+        self.assertEqual(window.fileSystemWatcher.files(), [fileName.replace('\\', '/')])
+
+        window.closeTab(0)
+        self.assertEqual(window.fileSystemWatcher.files(), [])
+        with suppress(PermissionError):
+            os.remove(fileName)
+
+    @unittest.skipIf(platform.system() == 'Windows', 'QFileSystemWatcher does not work reliably')
+    @patch('ReText.window.QMessageBox.warning', return_value=QMessageBox.StandardButton.Discard)
+    @patch('ReText.window.QMessageBox.exec', return_value=None)
+    def test_rewatchFileAfterItReappears(self, messageBoxExecMock, messageBoxWarningMock):
+        # Some saves remove the file before writing the new one, so it is
+        # briefly absent. The watch cannot be re-created while that is the
+        # case, and giving up then would leave the file unwatched forever.
+        self.fileSystemWatcherPatcher.stop()
+        window = ReTextWindow()
+        handle, fileName = tempfile.mkstemp(suffix='.mkd')
+        os.close(handle)  # the file has to be replaceable and removable
+        with open(fileName, 'w', encoding='utf-8') as tempFile:
+            tempFile.write('first content')
+        window.openFileWrapper(fileName)
+        self.assertEqual(window.fileSystemWatcher.files(), [fileName.replace('\\', '/')])
+        editBox = window.currentTab.editBox
+        self.assertEqual(editBox.toPlainText(), 'first content')
+        app.processEvents()
+
+        os.remove(fileName)
+        QTest.qWait(100)  # let the watcher notice that the file is gone
+        with open(fileName, 'w', encoding='utf-8') as tempFile:
+            tempFile.write('recreated externally')
+        QTest.qWait(MAX_REWATCH_ATTEMPTS * REWATCH_RETRY_INTERVAL)
+        self.assertEqual(window.fileSystemWatcher.files(), [fileName.replace('\\', '/')])
+
+        # The watch has to be functional again, not merely registered.
+        editBox.document().setModified(False)
+        with open(fileName, 'w', encoding='utf-8') as tempFile:
+            tempFile.write('modified after recreation')
+        QTest.qWait(100)
+        self.assertEqual(editBox.toPlainText(), 'modified after recreation')
 
         window.closeTab(0)
         self.assertEqual(window.fileSystemWatcher.files(), [])

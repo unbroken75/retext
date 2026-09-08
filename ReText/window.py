@@ -102,6 +102,10 @@ previewStatesByName = {
     'live-preview': PreviewLive,
 }
 
+# See rewatchFile() for what these are used for.
+REWATCH_RETRY_INTERVAL = 200  # milliseconds
+MAX_REWATCH_ATTEMPTS = 10
+
 
 class ReTextWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -974,9 +978,8 @@ class ReTextWindow(QMainWindow):
             elif globalSettings.defaultPreviewState == "normal-preview":
                 self.actionPreview.setChecked(True)
                 self.preview(True)
-            if fileName:
-                self.fileSystemWatcher.addPath(fileName)
             if QFile.exists(fileName):
+                self.rewatchFile(fileName)
                 self.currentTab.readTextFromFile(fileName)
             else:
                 self.currentTab.fileName = fileName
@@ -1291,9 +1294,38 @@ class ReTextWindow(QMainWindow):
             messageBox.exec()
             if messageBox.clickedButton() is reloadButton:
                 tab.readTextFromFile()
-        if fileName not in self.fileSystemWatcher.files():
-            # https://github.com/retext-project/retext/issues/137
-            self.fileSystemWatcher.addPath(fileName)
+        self.rewatchFile(fileName)
+
+    def rewatchFile(self, fileName, attempt=0):
+        '''
+        (Re-)adds fileName to the file system watcher, unless it is
+        already watched. https://github.com/retext-project/retext/issues/137
+
+        Many applications do not save files in place: they write a new
+        file and then rename it over the original. That replaces the
+        file the operating system watch refers to, so the watch has to
+        be re-created after every such change.
+
+        Right after the change is reported, the new file may not be in
+        place yet (a delete-then-recreate save may still be in progress),
+        and then addPath fails and returns False. Retry a few times with
+        a short delay in that case, instead of silently leaving the file
+        unwatched for the rest of the session.
+        '''
+        if attempt > 0 and not any(tab.fileName == fileName for tab in self.iterateTabs()):
+            # The tab was closed while we were waiting for the file to
+            # reappear. Only checked when retrying: on the first attempt
+            # the tab may not have been given its file name yet.
+            return
+        if fileName in self.fileSystemWatcher.files():
+            return
+        if QFile.exists(fileName) and self.fileSystemWatcher.addPath(fileName):
+            return
+        if attempt < MAX_REWATCH_ATTEMPTS:
+            QTimer.singleShot(
+                REWATCH_RETRY_INTERVAL,
+                lambda: self.rewatchFile(fileName, attempt + 1),
+            )
 
     def maybeSave(self, ind):
         tab = self.tabWidget.widget(ind)
