@@ -102,6 +102,8 @@ previewStatesByName = {
     'live-preview': PreviewLive,
 }
 
+previewStateNames = {state: name for name, state in previewStatesByName.items()}
+
 # See rewatchFile() for what these are used for.
 REWATCH_RETRY_INTERVAL = 200  # milliseconds
 MAX_REWATCH_ATTEMPTS = 10
@@ -494,8 +496,15 @@ class ReTextWindow(QMainWindow):
         self.fileSystemWatcher.fileChanged.connect(self.fileChanged)
 
     def restoreLastOpenedFiles(self):
-        for file in globalCache.lastFileList:
-            self.openFileWrapper(file)
+        previewStates = []
+        if globalSettings.savePreviewState:
+            previewStates = globalCache.lastPreviewStateList
+        for index, file in enumerate(globalCache.lastFileList):
+            # The saved state wins over defaultPreviewState.
+            previewState = None
+            if index < len(previewStates):
+                previewState = previewStatesByName.get(previewStates[index], PreviewDisabled)
+            self.openFileWrapper(file, previewState)
 
         # Show the tab of last opened file
         lastTabIndex = globalCache.lastTabIndex
@@ -633,8 +642,10 @@ class ReTextWindow(QMainWindow):
             self.updateTabTitle(self.ind, tab)
             self.setWindowModified(changed)
 
-    def createTab(self, fileName):
-        previewState = previewStatesByName.get(globalSettings.defaultPreviewState, PreviewDisabled)
+    def createTab(self, fileName, previewState=None):
+        if previewState is None:
+            previewState = previewStatesByName.get(globalSettings.defaultPreviewState,
+                                                   PreviewDisabled)
         if previewState == PreviewNormal and not fileName:
             previewState = PreviewDisabled  # Opening empty document in preview mode makes no sense
         self.currentTab = ReTextTab(self, fileName, previewState)
@@ -708,6 +719,19 @@ class ReTextWindow(QMainWindow):
         globalSettings.font = font.toString()
         for tab in self.iterateTabs():
             tab.triggerPreviewUpdate()
+
+    def setPreviewState(self, previewState):
+        '''
+        Switches the current tab to previewState. The menu actions are
+        only checked, not triggered, so each of them has to be paired
+        with its handler by hand.
+        '''
+        if previewState == PreviewLive:
+            self.actionLivePreview.setChecked(True)
+            self.enableLivePreview(True)
+        else:
+            self.actionPreview.setChecked(previewState == PreviewNormal)
+            self.preview(previewState == PreviewNormal)
 
     def preview(self, viewmode):
         self.currentTab.previewState = viewmode * 2
@@ -953,7 +977,7 @@ class ReTextWindow(QMainWindow):
             self.openFileWrapper(fileName)
 
     @pyqtSlot(str)
-    def openFileWrapper(self, fileName):
+    def openFileWrapper(self, fileName, previewState=None):
         if not fileName:
             return
         fileName = os.path.abspath(fileName)
@@ -972,9 +996,11 @@ class ReTextWindow(QMainWindow):
                 self.currentTab.editBox.document().isModified()
             )
             if noEmptyTab:
-                self.createTab(fileName)
+                self.createTab(fileName, previewState)
                 self.ind = self.tabWidget.count()-1
                 self.tabWidget.setCurrentIndex(self.ind)
+            elif previewState is not None:
+                self.setPreviewState(previewState)
             elif globalSettings.defaultPreviewState == "normal-preview":
                 self.actionPreview.setChecked(True)
                 self.preview(True)
@@ -1366,6 +1392,11 @@ class ReTextWindow(QMainWindow):
             files = [tab.fileName for tab in self.iterateTabs()]
             globalCache.lastFileList = files
             globalCache.lastTabIndex = self.tabWidget.currentIndex()
+            if globalSettings.savePreviewState:
+                globalCache.lastPreviewStateList = [
+                    previewStateNames[tab.previewState] for tab in self.iterateTabs()]
+            else:
+                globalCache.lastPreviewStateList = []
         closeevent.accept()
 
     def viewHtml(self):

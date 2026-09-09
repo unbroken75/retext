@@ -73,6 +73,7 @@ configOptions = {
     'restDefaultFileExtension': '.rst',
     'rightMargin': 0,
     'rightMarginWrap': False,
+    'savePreviewState': False,
     'saveWindowGeometry': False,
     'scrollFactor': 1.0,
     'showDirectoryTree': False,
@@ -92,6 +93,7 @@ configOptions = {
 
 cacheOptions = {
     'lastFileList': [],
+    'lastPreviewStateList': [],
     'lastTabIndex': 0,
     'recentFileList': [],
     'splitterState': QByteArray(),

@@ -34,6 +34,7 @@ option name                    | type      | description
 `restDefaultFileExtension`     | string    | default file extension for reStructuredText files (default: `.rst`)
 `rightMargin`                  | integer   | enable drawing of vertical line on defined position (or 0 to disable)
 `rightMarginWrap`              | boolean   | enable soft wrap at specified margin line (default: false)
+`savePreviewState`             | boolean   | whether to restore the preview state each of the last documents was closed in, falling back to `defaultPreviewState`; requires `openLastFilesOnStartup` (default: false)
 `saveWindowGeometry`           | boolean   | whether to restore window geometry from previous session (default: false)
 `scrollFactor`                 | float     | scrolling speed factor (default: 1.0)
 `showDirectoryTree`            | boolean   | whether to show a directory tree on the left side of the window (default: false)

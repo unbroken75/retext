@@ -131,6 +131,7 @@ class ConfigDialog(QDialog):
             (self.tr('Behavior'), (
                 (self.tr('Automatically save documents'), 'autoSave'),
                 (self.tr('Automatically open last documents on startup'), 'openLastFilesOnStartup'),
+                (self.tr('Restore preview state of last documents'), 'savePreviewState'),
                 (self.tr('Number of recent documents'), 'recentDocumentsCount'),
                 (self.tr('Restore window geometry'), 'saveWindowGeometry'),
                 (self.tr('Default preview state'), 'defaultPreviewState'),

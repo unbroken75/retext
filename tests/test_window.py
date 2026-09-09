@@ -28,11 +28,12 @@ from unittest.mock import MagicMock, patch
 import markups
 from markups.abstract import ConvertedMarkup
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QFont, QTextCursor
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 import ReText
+from ReText.tab import PreviewDisabled, PreviewLive, PreviewNormal
 from ReText.window import MAX_REWATCH_ATTEMPTS, REWATCH_RETRY_INTERVAL, ReTextWindow
 
 path_to_testdata = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'testdata')
@@ -64,6 +65,11 @@ class TestWindow(unittest.TestCase):
             'ReText.window.globalSettings',
             MagicMock(**ReText.configOptions),
         ).start()
+        # configOptions only holds the option values, so the mock has no
+        # working getPreviewFont: without this, any tab left in a preview
+        # state passes a MagicMock to QTextDocument.setDefaultFont, and
+        # the exception in the slot takes the whole process down.
+        self.globalSettingsMock.getPreviewFont.return_value = QFont()
         self.globalCacheMock = patch(
             'ReText.window.globalCache',
             MagicMock(**ReText.cacheOptions),
@@ -599,6 +605,57 @@ class TestWindow(unittest.TestCase):
         self.assertEqual(window.fileSystemWatcher.files(), [])
         with suppress(PermissionError):
             os.remove(fileName)
+
+    def test_savePreviewState(self):
+        self.globalSettingsMock.openLastFilesOnStartup = True
+        self.globalSettingsMock.savePreviewState = True
+        fileName = os.path.join(path_to_testdata, 'existing_file.md')
+
+        window = ReTextWindow()
+        window.openFileWrapper(fileName)
+        window.setPreviewState(PreviewLive)
+        self.assertEqual(window.currentTab.previewState, PreviewLive)
+        window.close()
+        self.assertEqual(self.globalCacheMock.lastFileList, [fileName])
+        self.assertEqual(self.globalCacheMock.lastPreviewStateList, ['live-preview'])
+
+        # Reopening the document has to bring the live preview back.
+        restoredWindow = ReTextWindow()
+        restoredWindow.restoreLastOpenedFiles()
+        self.assertEqual(restoredWindow.currentTab.fileName, fileName)
+        self.assertEqual(restoredWindow.currentTab.previewState, PreviewLive)
+
+    def test_savePreviewStateOverridesDefaultPreviewState(self):
+        # A document closed in the editor stays in the editor, even when
+        # defaultPreviewState asks for a preview.
+        self.globalSettingsMock.openLastFilesOnStartup = True
+        self.globalSettingsMock.savePreviewState = True
+        self.globalSettingsMock.defaultPreviewState = 'live-preview'
+        self.globalCacheMock.lastFileList = [os.path.join(path_to_testdata, 'existing_file.md')]
+        self.globalCacheMock.lastPreviewStateList = ['editor']
+
+        window = ReTextWindow()
+        window.restoreLastOpenedFiles()
+        self.assertEqual(window.currentTab.previewState, PreviewDisabled)
+
+    def test_savePreviewStateDisabled(self):
+        self.globalSettingsMock.openLastFilesOnStartup = True
+        self.globalSettingsMock.savePreviewState = False
+        self.globalSettingsMock.defaultPreviewState = 'normal-preview'
+        fileName = os.path.join(path_to_testdata, 'existing_file.md')
+
+        window = ReTextWindow()
+        window.openFileWrapper(fileName)
+        self.assertEqual(window.currentTab.previewState, PreviewNormal)
+        window.setPreviewState(PreviewDisabled)
+        window.close()
+        self.assertEqual(self.globalCacheMock.lastPreviewStateList, [])
+
+        # With the option off, defaultPreviewState decides, as before.
+        self.globalCacheMock.lastPreviewStateList = ['editor']
+        restoredWindow = ReTextWindow()
+        restoredWindow.restoreLastOpenedFiles()
+        self.assertEqual(restoredWindow.currentTab.previewState, PreviewNormal)
 
 if __name__ == '__main__':
     unittest.main()
