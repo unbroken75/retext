@@ -150,6 +150,13 @@ class ReTextWebEnginePreview(QWebEngineView):
 
         self.setPage(webPage)
 
+        # Qt WebEngine resets the zoom factor of the page whenever new content
+        # is loaded, so the cached factor has to be applied again after every
+        # load. This is connected before SyncScroll connects its own handler,
+        # so that the zoom is already in place when the scroll position of the
+        # previous content is restored.
+        webPage.loadFinished.connect(self._applyZoomFactor)
+
         self.editBox = tab.editBox
         self.syncscroll = SyncScroll(
             webPage,
@@ -243,6 +250,9 @@ class ReTextWebEnginePreview(QWebEngineView):
     def _handleEditorResized(self, rect):
         self.syncscroll.handleEditorResized(rect.height())
 
+    def _applyZoomFactor(self, ok=True):
+        self.setZoomFactor(globalCache.webEngineZoomFactor)
+
     def wheelEvent(self, event):
         if QGuiApplication.keyboardModifiers() == Qt.KeyboardModifier.ControlModifier:
             newZoomFactor = globalCache.webEngineZoomFactor * (1.001 ** event.angleDelta().y())
@@ -252,5 +262,5 @@ class ReTextWebEnginePreview(QWebEngineView):
         return super().wheelEvent(event)
 
     def showEvent(self, event):
-        self.setZoomFactor(globalCache.webEngineZoomFactor)
+        self._applyZoomFactor()
         return super().showEvent(event)
