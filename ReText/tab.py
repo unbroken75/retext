@@ -39,6 +39,11 @@ except ImportError:
 
 PreviewDisabled, PreviewLive, PreviewNormal = range(3)
 
+# Above this size, in characters of markup, the position map that scroll
+# synchronization is based on costs more than the synchronization is worth,
+# see startPendingConversion().
+MAX_SYNC_SCROLL_DOCUMENT_SIZE = 2 * 1024 * 1024
+
 class ReTextTab(QSplitter):
 
     fileNameChanged = pyqtSignal()
@@ -299,11 +304,19 @@ class ReTextTab(QSplitter):
     def startPendingConversion(self):
         self.previewOutdated = False
 
-        requested_extensions = ['ReText.mdx_posmap'] if globalSettings.syncScroll else []
+        # The position map asks for a marker around every block of the
+        # document, which the conversion has to produce, the preview has to
+        # carry, and scroll synchronization has to find again in the rendered
+        # page every time its size changes. On a large document that costs
+        # more than the synchronization is worth, so it is left out.
+        text = self.editBox.toPlainText()
+        syncScroll = (globalSettings.syncScroll
+                      and len(text) <= MAX_SYNC_SCROLL_DOCUMENT_SIZE)
+        requested_extensions = ['ReText.mdx_posmap'] if syncScroll else []
         self.converterProcess.start_conversion(self.getActiveMarkupClass().name,
                                                self.fileName,
                                                requested_extensions,
-                                               self.editBox.toPlainText(),
+                                               text,
                                                QDir.currentPath())
 
     def updateBoxesVisibility(self):

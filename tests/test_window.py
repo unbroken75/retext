@@ -649,6 +649,27 @@ class TestWindow(unittest.TestCase):
         with suppress(PermissionError):
             os.remove(fileName)
 
+    def test_syncScrollIsLeftOutForLargeDocuments(self):
+        # The position map that scroll synchronization needs is expensive
+        # enough on a large document to not be worth asking for.
+        window = ReTextWindow()
+        window.openFileWrapper(os.path.join(path_to_testdata, 'existing_file.md'))
+        tab = window.currentTab
+        tab.converterProcess = MagicMock()
+
+        with patch('ReText.tab.MAX_SYNC_SCROLL_DOCUMENT_SIZE', 1000):
+            tab.editBox.setPlainText('x' * 500)
+            tab.startPendingConversion()
+            self.assertIn('ReText.mdx_posmap',
+                          tab.converterProcess.start_conversion.call_args[0][2])
+
+            tab.editBox.setPlainText('x' * 1500)
+            tab.startPendingConversion()
+            self.assertNotIn('ReText.mdx_posmap',
+                             tab.converterProcess.start_conversion.call_args[0][2])
+
+        window.closeTab(0)
+
     def test_savePreviewState(self):
         self.globalSettingsMock.openLastFilesOnStartup = True
         self.globalSettingsMock.savePreviewState = True
