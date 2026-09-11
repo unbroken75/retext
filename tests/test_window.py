@@ -606,6 +606,49 @@ class TestWindow(unittest.TestCase):
         with suppress(PermissionError):
             os.remove(fileName)
 
+    @unittest.skipIf(platform.system() == 'Windows', 'QFileSystemWatcher does not work reliably')
+    @patch('ReText.window.QMessageBox.warning', return_value=QMessageBox.StandardButton.Discard)
+    @patch('ReText.window.QMessageBox.exec', return_value=None)
+    def test_checkWatchedFiles(self, messageBoxExecMock, messageBoxWarningMock):
+        # An application that needs seconds to write a big file outlives the
+        # retries in rewatchFile(), and the file is then left unwatched: the
+        # periodic check has to notice that, pick up the change that was
+        # missed and watch the file again.
+        self.fileSystemWatcherPatcher.stop()
+        window = ReTextWindow()
+        handle, fileName = tempfile.mkstemp(suffix='.mkd')
+        os.close(handle)
+        with open(fileName, 'w', encoding='utf-8') as tempFile:
+            tempFile.write('first content')
+        window.openFileWrapper(fileName)
+        self.assertEqual(window.fileSystemWatcher.files(), [fileName.replace('\\', '/')])
+        editBox = window.currentTab.editBox
+        self.assertEqual(editBox.toPlainText(), 'first content')
+        app.processEvents()
+
+        # Losing the watch and changing the file without it in place is what
+        # happens when a save takes longer than the retries last.
+        window.fileSystemWatcher.removePath(fileName)
+        self.assertEqual(window.fileSystemWatcher.files(), [])
+        with open(fileName, 'w', encoding='utf-8') as tempFile:
+            tempFile.write('changed while unwatched')
+        QTest.qWait(100)
+        self.assertEqual(editBox.toPlainText(), 'first content')
+
+        window.checkWatchedFiles()
+        self.assertEqual(editBox.toPlainText(), 'changed while unwatched')
+        self.assertEqual(window.fileSystemWatcher.files(), [fileName.replace('\\', '/')])
+
+        # The watch has to be functional again, not merely registered.
+        with open(fileName, 'w', encoding='utf-8') as tempFile:
+            tempFile.write('changed while watched again')
+        QTest.qWait(100)
+        self.assertEqual(editBox.toPlainText(), 'changed while watched again')
+
+        window.closeTab(0)
+        with suppress(PermissionError):
+            os.remove(fileName)
+
     def test_savePreviewState(self):
         self.globalSettingsMock.openLastFilesOnStartup = True
         self.globalSettingsMock.savePreviewState = True
