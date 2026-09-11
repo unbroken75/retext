@@ -363,8 +363,30 @@ class ReTextTab(QSplitter):
         if previousFileName != self._fileName:
             self.updateActiveMarkupClass()
 
+        # Replacing the text moves the editor back to the top of the
+        # document, and the preview follows it there. When the same file is
+        # being reloaded, the user is still reading the same document, so
+        # remember where they were before replacing the text, and go back
+        # there afterwards.
+        #
+        # Which position matters depends on what is visible: with the editor
+        # shown it is its first visible line, while in preview mode the
+        # editor is hidden and has no scroll position of its own, so the
+        # position lives in the preview and syncscroll takes care of it.
+        reloading = (previousFileName == self._fileName)
+        syncscroll = getattr(self.previewBox, 'syncscroll', None)
+        firstVisibleLine = None
+        if reloading:
+            firstVisibleLine = self.getFirstVisibleLine()
+            if syncscroll is not None:
+                syncscroll.beginTextReplacement()
+
         self.forceDisableAutoSave = False
         self.editBox.setPlainText(text)
+        if reloading and syncscroll is not None:
+            syncscroll.endTextReplacement()
+        if firstVisibleLine:
+            self.scrollToLine(firstVisibleLine)
         self.editBox.document().setModified(False)
         self.handleModificationChanged()
 
@@ -416,6 +438,28 @@ class ReTextTab(QSplitter):
                 self.fileNameChanged.emit()
 
         return result
+
+    def getFirstVisibleLine(self):
+        '''
+        Return the number of the first line visible in the editor, or None
+        if that cannot be determined.
+        '''
+        cursor = self.editBox.cursorForPosition(QPoint(0, 0))
+        return cursor.blockNumber() if not cursor.isNull() else None
+
+    def scrollToLine(self, line):
+        '''
+        Scroll the editor so that the given line is the first visible one.
+        '''
+        document = self.editBox.document()
+        # The document may have become shorter than it was when the line
+        # number was taken, so the line can now be past its end.
+        line = min(line, document.blockCount() - 1)
+        block = document.findBlockByNumber(line)
+        if not block.isValid():
+            return
+        top = document.documentLayout().blockBoundingRect(block).top()
+        self.editBox.verticalScrollBar().setValue(int(top))
 
     def goToLine(self,line):
         block = self.editBox.document().findBlockByLineNumber(line)

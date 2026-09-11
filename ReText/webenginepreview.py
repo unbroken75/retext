@@ -156,6 +156,7 @@ class ReTextWebEnginePreview(QWebEngineView):
             editorPositionToSourceLineFunc,
             sourceLineToEditorPositionFunc,
             setEditorScrollValueFunc=self.editBox.verticalScrollBar().setValue,
+            isPreviewVisibleFunc=self.isVisible,
         )
 
         settings = self.settings()
@@ -253,4 +254,5 @@ class ReTextWebEnginePreview(QWebEngineView):
 
     def showEvent(self, event):
         self.setZoomFactor(globalCache.webEngineZoomFactor)
+        self.syncscroll.handlePreviewShown()
         return super().showEvent(event)

@@ -25,16 +25,29 @@ class SyncScroll:
     def __init__(self, previewFrame,
                        editorPositionToSourceLineFunc,
                        sourceLineToEditorPositionFunc,
-                       setEditorScrollValueFunc=None):
+                       setEditorScrollValueFunc=None,
+                       isPreviewVisibleFunc=None):
         self.posmap = {}
         self.frame = previewFrame
         self.editorPositionToSourceLine = editorPositionToSourceLineFunc
         self.sourceLineToEditorPosition = sourceLineToEditorPositionFunc
         # Optional callback to set the editor vertical scroll value (in pixels)
         self._setEditorScrollValue = setEditorScrollValueFunc
+        # Optional callback telling whether the preview is visible
+        self._isPreviewVisible = isPreviewVisibleFunc or (lambda: True)
 
         self.previewPositionBeforeLoad = QPoint()
         self.contentIsLoading = False
+
+        # Position to move the preview back to once the content that is
+        # being reloaded has been laid out, and a flag telling that the text
+        # of the editor is being replaced right now.
+        self._position_to_restore = None
+        self._replacing_text = False
+        # Last position seen at the top of the preview. Remembered because
+        # the position of a preview that is not visible, such as the one of
+        # a tab the user has switched away from, cannot be read.
+        self._top_position = None
 
         self.editorViewportHeight = 0
         self.editorViewportOffset = 0
@@ -82,6 +95,80 @@ class SyncScroll:
         window.scrollTo(), and therefore setScrollPosition(), expects.
         '''
         return self.frame.scrollPosition() / self._zoomFactor()
+
+    def getFirstVisiblePosition(self, previewY=None):
+        '''
+        Return the position of the top of the preview as a (source line,
+        offset) pair, or None if the position map is not available.
+
+        The offset is the distance in pixels from the top of the preview
+        down to the end of that line's block, which is the position the map
+        holds for it. Without it, going back to a position would only be
+        accurate to a whole block.
+        '''
+        if not self._preview_posmap:
+            return None
+        if previewY is None:
+            previewY = self._previewScrollPosition().y()
+        index = bisect_left(self._preview_positions, previewY)
+        index = min(index, len(self._preview_posmap) - 1)
+        position, line = self._preview_posmap[index]
+        return line, position - previewY
+
+    def beginTextReplacement(self):
+        '''
+        Called before the text of the editor is replaced with a new version
+        of the same document.
+
+        Remembers the position shown at the top of the preview, and stops
+        following the editor until the replacement is over: replacing the
+        text moves its cursor and its scroll position back to the beginning
+        of the document, which says nothing about where the user was
+        reading, and in preview mode the editor is hidden and has no scroll
+        position of its own at all.
+
+        The remembered position is restored by _setPositionMap(), as soon
+        as the reloaded content has been laid out and its positions are
+        known.
+        '''
+        if self._isPreviewVisible():
+            self._position_to_restore = self.getFirstVisiblePosition()
+        else:
+            # The document is being reloaded in a tab the user is not
+            # looking at, so the preview has no position to read: the last
+            # position they were seen at is the one to go back to.
+            self._position_to_restore = self._top_position
+        self._replacing_text = True
+
+    def endTextReplacement(self):
+        self._replacing_text = False
+
+    def handlePreviewShown(self):
+        '''
+        Called when the preview becomes visible, to carry out a restore that
+        was waiting for it.
+        '''
+        if self._position_to_restore is not None:
+            self.frame.getPositionMap(self._setPositionMap)
+
+    def _restorePosition(self, position):
+        line, offset = position
+        # The document may have become shorter, so the line may be past its
+        # end: the last line whose position is known is then the best match.
+        index = bisect_left(self._posmap_lines, line)
+        index = min(index, len(self._posmap_lines) - 1)
+        blockEnd = self.posmap[self._posmap_lines[index]]
+        # The block itself may have become shorter as well, so do not let
+        # the offset take the preview above the beginning of the block.
+        blockStart = self.posmap[self._posmap_lines[index - 1]] if index else 0
+        offset = min(offset, blockEnd - blockStart)
+        pos = self._previewScrollPosition()
+        pos.setY(blockEnd - offset)
+        self._updating_preview = True
+        try:
+            self.frame.setScrollPosition(pos)
+        finally:
+            self._updating_preview = False
 
     def handleEditorResized(self, editorViewportHeight):
         self.editorViewportHeight = editorViewportHeight
@@ -132,6 +219,8 @@ class SyncScroll:
         return toValue
 
     def _updatePreviewScrollPosition(self):
+        if self._replacing_text:
+            return
         self._preview_scroll_pending = None
         self._preview_scroll_pending_time = 0.0
         self._preview_scroll_pending_count = 0
@@ -214,6 +303,14 @@ class SyncScroll:
             self._preview_posmap = []
             self._preview_positions = []
 
+        if self._position_to_restore is not None and self.posmap:
+            # A position map taken while the preview is not visible has no
+            # usable geometry behind it, so keep the restore pending until
+            # the user comes back to the tab.
+            if self._isPreviewVisible():
+                self._restorePosition(self._position_to_restore)
+                self._position_to_restore = None
+
     def handlePreviewScrolled(self, previewScrollPosition):
         """
         Update editor scroll position based on preview scroll position.
@@ -229,6 +326,9 @@ class SyncScroll:
         # Avoid reacting to our own preview updates
         if self._updating_preview:
             return
+        # The user is scrolling the preview, so they are no longer waiting
+        # to be taken back to where they were before a reload.
+        self._position_to_restore = None
         if not self.posmap:
             return
 
@@ -255,6 +355,10 @@ class SyncScroll:
 
         if not self._preview_posmap:
             return
+
+        topPosition = self.getFirstVisiblePosition(preview_y)
+        if topPosition is not None:
+            self._top_position = topPosition
 
         self._preview_scroll_pending = None
         self._preview_scroll_pending_time = 0.0
