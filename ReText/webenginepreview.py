@@ -16,7 +16,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from PyQt6.QtCore import QEvent, Qt
+import json
+import os
+from contextlib import suppress
+from tempfile import mkstemp
+
+from PyQt6.QtCore import QEvent, Qt, QUrl
 from PyQt6.QtGui import (
     QColor,
     QCursor,
@@ -38,6 +43,33 @@ from PyQt6.QtWidgets import QApplication, QLabel
 from ReText import globalCache, globalSettings
 from ReText.editor import getColor
 from ReText.syncscroll import SyncScroll
+
+# setHtml() hands the content to Chromium through a data: URL, and Chromium
+# refuses URLs longer than 2 MB (url::kMaxURLChars). Base64 inflates the
+# content by a third on the way into the URL, and the failure is silent:
+# nothing is loaded, and nothing is reported. Content above this size is
+# loaded from a file of its own instead.
+MAX_DATA_URL_CONTENT_SIZE = 1024 * 1024
+
+
+def removeFile(fileName):
+    with suppress(OSError):
+        os.remove(fileName)
+
+
+def samePath(fileName, otherFileName):
+    '''
+    Tell whether two names refer to the same file.
+
+    QUrl.toLocalFile() returns a path with forward slashes, while the names
+    ReText keeps come from the file system, which on Windows means back
+    slashes and no significant case, so the two cannot be compared as they
+    are.
+    '''
+    if fileName is None or otherFileName is None:
+        return False
+    return (os.path.normcase(os.path.normpath(fileName))
+            == os.path.normcase(os.path.normpath(otherFileName)))
 
 
 class ReTextWebEngineUrlRequestInterceptor(QWebEngineUrlRequestInterceptor):
@@ -86,6 +118,7 @@ class UrlPopup(QLabel):
 class ReTextWebEnginePage(QWebEnginePage):
     def __init__(self, parent, tab):
         QWebEnginePage.__init__(self, parent)
+        self.preview = parent
         self.tab = tab
         self.interceptor = ReTextWebEngineUrlRequestInterceptor(self)
         self.setUrlRequestInterceptor(self.interceptor)
@@ -114,6 +147,18 @@ class ReTextWebEnginePage(QWebEnginePage):
         """
         self.runJavaScript(script, resultCallback)
 
+    def scrollToAnchor(self, anchor):
+        anchorLiteral = json.dumps(anchor)
+        script = f"""
+        var anchor = {anchorLiteral};
+        var element = document.getElementById(anchor) ||
+                      document.getElementsByName(anchor)[0];
+        if (element) {{
+            element.scrollIntoView();
+        }}
+        """
+        self.runJavaScript(script)
+
     def javaScriptConsoleMessage(self, level, message, lineNumber, sourceId):
         print(f"level={level!r} message={message!r} lineNumber={lineNumber!r} sourceId={sourceId!r}")
 
@@ -124,7 +169,20 @@ class ReTextWebEnginePage(QWebEnginePage):
             return True
         if url.isLocalFile():
             localFile = url.toLocalFile()
-            if localFile == self.tab.fileName:
+            if samePath(localFile, self.preview.contentFileName):
+                # Our own copy of the content of the preview, which is only
+                # used for content that is too large for a data: URL, see
+                # ReTextWebEnginePreview.setHtml().
+                return True
+            if samePath(localFile, self.tab.fileName):
+                if url.hasFragment():
+                    # A link to a place inside the document. The preview is
+                    # not necessarily loaded from the document itself, and
+                    # then this is not a navigation within the same page,
+                    # which is what it is meant to be: scroll to the anchor
+                    # rather than let anything be loaded for it.
+                    self.scrollToAnchor(url.fragment())
+                    return False
                 self.tab.startPendingConversion()
                 return False
             if self.tab.openSourceFile(localFile):
@@ -142,6 +200,7 @@ class ReTextWebEnginePreview(QWebEngineView):
                  sourceLineToEditorPositionFunc):
 
         QWebEngineView.__init__(self, parent=tab)
+        self.contentFileName = None
         webPage = ReTextWebEnginePage(self, tab)
 
         handCursor = QCursor(Qt.CursorShape.PointingHandCursor)
@@ -193,8 +252,33 @@ class ReTextWebEnginePreview(QWebEngineView):
     def setHtml(self, html, baseUrl):
         # A hack to prevent WebEngine from stealing the focus
         self.setEnabled(False)
-        super().setHtml(html, baseUrl)
+        content = html.encode('utf-8')
+        if len(content) > MAX_DATA_URL_CONTENT_SIZE:
+            self.load(QUrl.fromLocalFile(self.writeContentToFile(content)))
+        else:
+            super().setHtml(html, baseUrl)
         self.setEnabled(True)
+
+    def writeContentToFile(self, content):
+        '''
+        Write the content of the preview to a file of its own and return its
+        name. The same file is reused for every later update.
+
+        Relative links and images are resolved against the base element that
+        the preview carries, see ReTextTab.getHtmlFromConverted(), so they
+        keep working even though the document is loaded from somewhere else.
+        '''
+        if self.contentFileName is None:
+            handle, fileName = mkstemp(prefix='retext-preview-', suffix='.html')
+            os.close(handle)
+            self.contentFileName = fileName
+            # The file belongs to this preview, so it goes away with it.
+            # fileName rather than self is captured on purpose, to not keep
+            # the preview alive through its own signal.
+            self.destroyed.connect(lambda: removeFile(fileName))
+        with open(self.contentFileName, 'wb') as contentFile:
+            contentFile.write(content)
+        return self.contentFileName
 
     def _handleWheelEvent(self, event):
         # Only pass wheelEvents on to the preview if syncscroll is

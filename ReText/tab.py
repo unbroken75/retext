@@ -203,6 +203,12 @@ class ReTextTab(QSplitter):
         if self.cssFileExists:
             headers += f'<link rel="stylesheet" type="text/css" href="{baseName}.css">\n'
         headers += f'<meta name="generator" content="ReText {app_version}">\n'
+        if preview:
+            # The preview is not necessarily loaded from the document, so
+            # say where relative links and images are to be resolved from
+            # instead of relying on where the content came from.
+            baseUrl = bytes(self.getPreviewBaseUrl().toEncoded()).decode('ascii')
+            headers += f'<base href="{baseUrl}">\n'
         if preview and globalSettings.scrollFactor != 1.0:
             headers += f"""
             <script>
@@ -235,6 +241,17 @@ class ReTextTab(QSplitter):
                 self.getHtmlFromConverted(converted, includeStyleSheet=includeStyleSheet, webenv=webenv),
             self.previewBox)
 
+    def getPreviewBaseUrl(self):
+        '''
+        Return the URL that the contents of the preview are relative to.
+
+        There is always one, otherwise the preview would refuse to show
+        images and other external objects.
+        '''
+        if self._fileName:
+            return QUrl.fromLocalFile(self._fileName)
+        return QUrl.fromLocalFile(QDir.currentPath())
+
     def updatePreviewBox(self):
         self.conversionPending = False
 
@@ -265,13 +282,7 @@ class ReTextTab(QSplitter):
             self.previewBox.updateScrollPosition(scrollbar.minimum(),
                                                  scrollbar.maximum())
         else:
-            # Always provide a baseUrl otherwise QWebView will
-            # refuse to show images or other external objects
-            if self._fileName:
-                baseUrl = QUrl.fromLocalFile(self._fileName)
-            else:
-                baseUrl = QUrl.fromLocalFile(QDir.currentPath())
-            self.previewBox.setHtml(html, baseUrl)
+            self.previewBox.setHtml(html, self.getPreviewBaseUrl())
 
         if self.previewOutdated:
             self.triggerPreviewUpdate()
