@@ -107,6 +107,7 @@ previewStateNames = {state: name for name, state in previewStatesByName.items()}
 # See rewatchFile() for what these are used for.
 REWATCH_RETRY_INTERVAL = 200  # milliseconds
 MAX_REWATCH_ATTEMPTS = 10
+WATCH_CHECK_INTERVAL = 10000  # milliseconds
 
 
 class ReTextWindow(QMainWindow):
@@ -494,6 +495,9 @@ class ReTextWindow(QMainWindow):
                 self.actionEnableSC.setChecked(True)
         self.fileSystemWatcher = QFileSystemWatcher()
         self.fileSystemWatcher.fileChanged.connect(self.fileChanged)
+        self.watchCheckTimer = QTimer(self)
+        self.watchCheckTimer.timeout.connect(self.checkWatchedFiles)
+        self.watchCheckTimer.start(WATCH_CHECK_INTERVAL)
 
     def restoreLastOpenedFiles(self):
         previewStates = []
@@ -1352,6 +1356,38 @@ class ReTextWindow(QMainWindow):
                 REWATCH_RETRY_INTERVAL,
                 lambda: self.rewatchFile(fileName, attempt + 1),
             )
+
+    def checkWatchedFiles(self):
+        '''
+        Make sure that the files of all tabs are still being watched, and
+        pick up the change that was missed while one of them was not.
+
+        The retries in rewatchFile() only cover the short moment in which a
+        file is being replaced. An application that needs seconds to write a
+        big file exhausts them, and the file is then left unwatched for the
+        rest of the session: none of its later changes ever reaches ReText,
+        and the document silently stays out of date.
+
+        A watch missing for a file that does exist means that the file was
+        replaced while we were not looking, so its contents may differ from
+        what is shown. fileChanged() is what already knows what to do about
+        that: it reloads the file, or asks first if it was modified here as
+        well, and re-establishes the watch.
+
+        The timer is held during the check, so that a question that is left
+        on screen is not asked a second time while it is waiting for an
+        answer.
+        '''
+        self.watchCheckTimer.stop()
+        try:
+            for tab in self.iterateTabs():
+                fileName = tab.fileName
+                if not fileName or fileName in self.fileSystemWatcher.files():
+                    continue
+                if QFile.exists(fileName):
+                    self.fileChanged(fileName)
+        finally:
+            self.watchCheckTimer.start(WATCH_CHECK_INTERVAL)
 
     def maybeSave(self, ind):
         tab = self.tabWidget.widget(ind)
