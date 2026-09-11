@@ -702,6 +702,17 @@ class TestWindow(unittest.TestCase):
         window.restoreLastOpenedFiles()
         self.assertEqual(window.currentTab.previewState, PreviewDisabled)
 
+    def test_anchorExtensionIsRequested(self):
+        # Links inside a document point at identifiers that Markdown only
+        # gives its headings when the toc extension is asked for.
+        window = ReTextWindow()
+        window.openFileWrapper(os.path.join(path_to_testdata, 'existing_file.md'))
+        tab = window.currentTab
+        tab.converterProcess = MagicMock()
+        tab.startPendingConversion()
+        self.assertIn('toc', tab.converterProcess.start_conversion.call_args[0][2])
+        window.closeTab(0)
+
     def test_savePreviewStateDisabled(self):
         self.globalSettingsMock.openLastFilesOnStartup = True
         self.globalSettingsMock.savePreviewState = False
