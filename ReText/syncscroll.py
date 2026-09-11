@@ -67,6 +67,22 @@ class SyncScroll:
     def isActive(self):
         return bool(self.posmap)
 
+    def _zoomFactor(self):
+        # Guard against a page that is not initialized yet.
+        return self.frame.zoomFactor() or 1.0
+
+    def _previewScrollPosition(self):
+        '''
+        Return the scroll position of the preview in the coordinates that
+        the position map is expressed in.
+
+        QWebEnginePage reports the scroll position scaled by the zoom
+        factor of the page, while the positions in the map come from
+        getBoundingClientRect() and are CSS pixels, which is also what
+        window.scrollTo(), and therefore setScrollPosition(), expects.
+        '''
+        return self.frame.scrollPosition() / self._zoomFactor()
+
     def handleEditorResized(self, editorViewportHeight):
         self.editorViewportHeight = editorViewportHeight
         self._updatePreviewScrollPosition()
@@ -86,7 +102,7 @@ class SyncScroll:
     def _handleLoadStarted(self):
         # Store the current scroll position so it can be restored when the new
         # content is presented
-        self.previewPositionBeforeLoad = self.frame.scrollPosition()
+        self.previewPositionBeforeLoad = self._previewScrollPosition()
         self.contentIsLoading = True
 
     def _handleLoadFinished(self):
@@ -175,7 +191,7 @@ class SyncScroll:
         self._preview_scroll_pending = preview_scroll_offset
         self._preview_scroll_pending_time = time.monotonic()
         self._preview_scroll_pending_count = 2
-        pos = self.frame.scrollPosition()
+        pos = self._previewScrollPosition()
         pos.setY(preview_scroll_offset)
         # Prevent preview→editor feedback while we adjust preview scroll
         self._updating_preview = True
@@ -221,6 +237,7 @@ class SyncScroll:
             preview_y = previewScrollPosition.y()
         except AttributeError:
             preview_y = float(previewScrollPosition)
+        preview_y /= self._zoomFactor()
 
         if self._preview_scroll_pending_count:
             # Ignore preview scroll events that we triggered ourselves shortly
