@@ -21,10 +21,16 @@ import signal
 import struct
 import traceback
 import weakref
+from contextlib import suppress
 from socket import socketpair
 
 import markups
 from PyQt6.QtCore import QObject, QSocketNotifier, pyqtSignal
+
+# How long to wait for the conversion process to end by itself before it is
+# terminated, in seconds. It has nothing left to do at that point, so there
+# is no reason to keep the user waiting for it.
+QUIT_TIMEOUT = 1
 
 
 def recvall(sock, remaining):
@@ -100,13 +106,20 @@ def _converter_process_func(conn_parent, conn_child):
 
             try:
                 sendObject(conn_child, result)
-            except BrokenPipeError:
-                # Continue despite the broken pipe because we expect that a
-                # 'quit' command will have been sent. If it has been then we
+            except ConnectionError:
+                # Continue despite the lost connection because we expect that
+                # a 'quit' command will have been sent. If it has been then we
                 # should terminate without any error messages. If no command
                 # was queued we will get an EOFError from the read, giving us a
                 # second chance to show that something went wrong by exiting
                 # with a traceback.
+                #
+                # Which error a lost connection raises depends on the platform
+                # and on the moment it is lost: a pipe that is broken while
+                # writing to it on Unix, a connection aborted or reset by the
+                # other end on Windows. Only BrokenPipeError used to be
+                # handled, so closing a tab whose large document was still
+                # being converted killed this process with a traceback.
                 continue
 
 
@@ -140,9 +153,19 @@ class ConverterProcess(QObject):
         self.conversionNotifier.activated.connect(self._conversionNotifierActivated)
 
         def on_finalize(conn):
-            sendObject(conn_parent, {'command':'quit'})
-            conn_parent.close()
-            child.join()
+            # The connection may already be gone, and the process may be in
+            # the middle of a conversion that can take seconds on a large
+            # document, or blocked sending a result that nobody is going to
+            # read any more. Neither is a reason to wait for it: the quit
+            # command is the polite way out, and the timeout is there so that
+            # closing a tab or the whole application cannot hang.
+            with suppress(OSError):
+                sendObject(conn, {'command': 'quit'})
+            conn.close()
+            child.join(QUIT_TIMEOUT)
+            if child.is_alive():
+                child.terminate()
+                child.join()
 
         weakref.finalize(self, on_finalize, conn_parent)
 
