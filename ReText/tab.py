@@ -39,6 +39,11 @@ except ImportError:
 
 PreviewDisabled, PreviewLive, PreviewNormal = range(3)
 
+# Markdown gives headings the identifiers that links inside a document
+# point at only when this extension is asked for. Markups ignores the
+# extensions it does not know, so it can be asked for unconditionally.
+ANCHOR_EXTENSIONS = ['toc']
+
 class ReTextTab(QSplitter):
 
     fileNameChanged = pyqtSignal()
@@ -225,6 +230,9 @@ class ReTextTab(QSplitter):
         markupClass = self.getActiveMarkupClass()
         if markupClass and markupClass.available():
             exportMarkup = markupClass(filename=self._fileName)
+            # Links inside the document have to keep working once it is
+            # exported, just as they do in the preview.
+            exportMarkup.requested_extensions = list(ANCHOR_EXTENSIONS)
 
             text = self.editBox.toPlainText()
             converted = exportMarkup.convert(text)
@@ -288,7 +296,9 @@ class ReTextTab(QSplitter):
     def startPendingConversion(self):
         self.previewOutdated = False
 
-        requested_extensions = ['ReText.mdx_posmap'] if globalSettings.syncScroll else []
+        requested_extensions = list(ANCHOR_EXTENSIONS)
+        if globalSettings.syncScroll:
+            requested_extensions.append('ReText.mdx_posmap')
         self.converterProcess.start_conversion(self.getActiveMarkupClass().name,
                                                self.fileName,
                                                requested_extensions,
